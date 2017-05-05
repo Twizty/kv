@@ -1,0 +1,6 @@
+[package]
+name = "kv"
+version = "0.1.0"
+authors = ["Maxim Davydov <maximdavydoff@yandex.ru>"]
+
+[dependencies]
