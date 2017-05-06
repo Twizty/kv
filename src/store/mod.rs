@@ -5,6 +5,8 @@ use std::sync::{Arc, Mutex};
 use std::borrow::Borrow;
 use std::time::{Instant};
 
+const TYPE_MISSMATCH_ERROR: &'static str = "Type missmatch for the key";
+
 enum V {
   StringValue(String),
   ListValue(Vec<String>),
@@ -58,7 +60,20 @@ impl Store {
   pub fn expire(&mut self, key: String, at: Instant) {
     let _data = self.mutex.lock().unwrap();
 
-   self.ttls.insert(key, at); 
+    self.ttls.insert(key, at); 
+  }
+
+  pub fn l_append(&mut self, key: String, val: String) -> Result<(), &'static str> {
+    let _data = self.mutex.lock().unwrap();
+
+    let mut value = self.store.entry(key.clone()).or_insert(V::ListValue(Vec::new()));
+
+    if let &mut V::ListValue(ref mut s) = value {
+      s.push(val);
+      Ok(())
+    } else {
+      Err(TYPE_MISSMATCH_ERROR)
+    }
   }
 }
 
@@ -79,6 +94,7 @@ mod test {
     assert_eq!(s.get("baz".to_string()), None);
   }
 
+  #[test]
   fn test_get_after_expire() {
     let mut s = Store::new();
     let key = "foo";
@@ -90,5 +106,27 @@ mod test {
     sleep(Duration::new(1, 0));
 
     assert_eq!(s.get(key.clone().to_string()), None);
+  }
+
+  #[test]
+  fn test_append_key() {
+    let mut s = Store::new();
+    let key = "foo";
+    let value = "bar";
+    let result = s.l_append(key.clone().to_string(), value.clone().to_string());
+
+    assert_eq!(result, Ok(()));
+  }
+
+  #[test]
+  fn test_returns_error_if_key_is_not_a_list() {
+    let mut s = Store::new();
+    let key = "foo";
+    let value = "bar";
+
+    s.set(key.clone().to_string(), value.clone().to_string());
+    let result = s.l_append(key.clone().to_string(), value.clone().to_string());
+
+    assert_eq!(result, Err(TYPE_MISSMATCH_ERROR));
   }
 }
