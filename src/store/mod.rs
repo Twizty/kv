@@ -52,13 +52,13 @@ impl Store {
   pub fn set(&mut self, key: String, val: String) {
     let _data = self.mutex.lock().unwrap();
 
-    self.store.insert(key.clone(), V::StringValue(val));
+    self.store.insert(key, V::StringValue(val));
   }
 
   pub fn expire(&mut self, key: String, at: Instant) {
     let _data = self.mutex.lock().unwrap();
 
-   self.ttls.insert(key.clone(), at); 
+   self.ttls.insert(key, at); 
   }
 }
 
