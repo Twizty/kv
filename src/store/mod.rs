@@ -4,6 +4,8 @@ use std::sync::{Mutex};
 use std::time::{Instant};
 
 const TYPE_MISSMATCH_ERROR: &'static str = "Type missmatch for the key";
+const KEY_NOT_FOUND_ERROR: &'static str = "Key not found";
+const INDEX_OUT_OF_RANGE_ERROR: &'static str = "Index is out of range";
 
 enum V {
   StringValue(String),
@@ -120,6 +122,63 @@ impl Store {
       None => None,
     }
   }
+
+  pub fn l_insert(&mut self, key: String, index: &usize, val: String) -> Result<(), &'static str> {
+    let _data = self.mutex.lock().unwrap();
+
+    if let Some(_) = drop_if_expired(self.ttls.entry(key.clone()), &mut self.store) {
+      return Err(KEY_NOT_FOUND_ERROR)
+    }
+
+    match self.store.get_mut(&key) {
+      Some(value) => {
+        match value {
+          &mut V::ListValue(ref mut list) => {
+            if list.len() > *index {
+              list.insert(*index, val);
+              Ok(())
+            } else {
+              Err(INDEX_OUT_OF_RANGE_ERROR)
+            }
+          },
+          _ => Err(TYPE_MISSMATCH_ERROR)
+        }
+      },
+      None => Err(KEY_NOT_FOUND_ERROR)
+    }
+  }
+
+  pub fn drop(&mut self, key: String) {
+    let _data = self.mutex.lock().unwrap();
+
+    self.store.remove(&key);
+    self.ttls.remove(&key);
+  }
+
+  pub fn l_drop(&mut self, key: String, index: &usize) -> Result<(), &'static str> {
+    let _data = self.mutex.lock().unwrap();
+
+    if let Some(_) = drop_if_expired(self.ttls.entry(key.clone()), &mut self.store) {
+      return Err(KEY_NOT_FOUND_ERROR)
+    }
+
+    match self.store.get_mut(&key) {
+      Some(value) => {
+        match value {
+          &mut V::ListValue(ref mut list) => {
+            if list.len() > *index {
+              list.remove(*index);
+              Ok(())
+            } else {
+              Err(INDEX_OUT_OF_RANGE_ERROR)
+            }
+          },
+          _ => Err(TYPE_MISSMATCH_ERROR)
+        }
+      },
+      None => Err(KEY_NOT_FOUND_ERROR)
+    }
+  }
 }
 
 
@@ -208,5 +267,70 @@ mod test {
     let result = s.l_getall(key.clone().to_string());
 
     assert_eq!(result, Some(&vec!["bar".to_string(), "baz".to_string()]));
+  }
+
+  #[test]
+  fn test_list_insert() {
+    let mut s = Store::new();
+    let key = "foo";
+    let value1 = "bar";
+    let value2 = "baz";
+    let value3 = "foobar";
+
+    s.l_append(key.clone().to_string(), value1.clone().to_string());
+    s.l_append(key.clone().to_string(), value2.clone().to_string());
+    s.l_insert(key.clone().to_string(), &0, value3.clone().to_string());
+
+    {
+      let result = s.l_getall(key.clone().to_string());
+      assert_eq!(result, Some(&vec!["foobar".to_string(), "bar".to_string(), "baz".to_string()]));
+    }
+
+    {
+      let new_result = s.l_insert(key.clone().to_string(), &5, value3.clone().to_string());
+      assert_eq!(new_result, Err(INDEX_OUT_OF_RANGE_ERROR));
+    }
+
+    {
+      s.set(key.clone().to_string(), value1.clone().to_string());
+      let new_result = s.l_insert(key.clone().to_string(), &0, value2.clone().to_string());
+      assert_eq!(new_result, Err(TYPE_MISSMATCH_ERROR));
+    }
+
+    {
+      let new_key = "foobaz";
+      let new_result = s.l_insert(new_key.clone().to_string(), &0, value1.clone().to_string());
+      assert_eq!(new_result, Err(KEY_NOT_FOUND_ERROR));
+    }
+  }
+
+  #[test]
+  fn test_list_drop() {
+    let mut s = Store::new();
+    let key = "foo";
+    let value = "bar";
+
+    s.l_append(key.clone().to_string(), value.clone().to_string());
+
+    {
+      s.l_drop(key.clone().to_string(), &0);
+      let result = s.l_getall(key.clone().to_string());
+      assert_eq!(result, Some(&vec![]));
+    }
+  }
+
+  #[test]
+  fn test_drop() {
+    let mut s = Store::new();
+    let key = "foo";
+    let value = "bar";
+
+    s.set(key.clone().to_string(), value.clone().to_string());
+
+    assert_eq!(s.get(key.clone().to_string()), Some(&(value.to_string())));
+
+    s.drop(key.clone().to_string());
+
+    assert_eq!(s.get(key.clone().to_string()), None);
   }
 }
