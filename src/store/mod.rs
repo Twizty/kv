@@ -10,7 +10,7 @@ const INDEX_OUT_OF_RANGE_ERROR: &'static str = "Index is out of range";
 enum V {
   StringValue(String),
   ListValue(Vec<String>),
-  MapValue(HashMap<String, String>),
+  HashValue(HashMap<String, String>),
 }
 
 pub struct Store {
@@ -179,6 +179,58 @@ impl Store {
       None => Err(KEY_NOT_FOUND_ERROR)
     }
   }
+
+  pub fn h_set(&mut self, key: String, h_key: String, val: String) -> Result<(), &'static str> {
+    let _data = self.mutex.lock().unwrap();
+
+    drop_if_expired(self.ttls.entry(key.clone()), &mut self.store);
+
+    let mut value = self.store.entry(key.clone()).or_insert(V::HashValue(HashMap::new()));
+
+    if let &mut V::HashValue(ref mut map) = value {
+      map.insert(h_key, val);
+      Ok(())
+    } else {
+      Err(TYPE_MISSMATCH_ERROR)
+    }
+  }
+
+  pub fn h_get(&mut self, key: String, h_key: String) -> Option<&String> {
+    let _data = self.mutex.lock().unwrap();
+
+    if let Some(_) = drop_if_expired(self.ttls.entry(key.clone()), &mut self.store) {
+      return None
+    }
+
+    match self.store.get_mut(&key) {
+      Some(value) => {
+        if let &mut V::HashValue(ref mut map) = value {
+          map.get(&h_key)
+        } else {
+          None
+        }
+      },
+      None => None
+    }
+  }
+
+  pub fn h_getall(&mut self, key: String) -> Option<&HashMap<String, String>> {
+    let _data = self.mutex.lock().unwrap();
+
+    if let Some(_) = drop_if_expired(self.ttls.entry(key.clone()), &mut self.store) {
+      return None
+    }
+
+    match self.store.get(&key) {
+      Some(value) => {
+        match value {
+          &V::HashValue(ref v) => Some(v),
+          _ => None,
+        }
+      },
+      None => None,
+    }
+  }
 }
 
 
@@ -332,5 +384,32 @@ mod test {
     s.drop(key.clone().to_string());
 
     assert_eq!(s.get(key.clone().to_string()), None);
+  }
+
+  #[test]
+  fn test_hash_getall() {
+    let mut s = Store::new();
+    let key = "foo";
+    let h_key1 = "foobar";
+    let h_key2 = "foobaz";
+    let value1 = "bar";
+    let value2 = "baz";
+
+    s.h_set(key.clone().to_string(), h_key1.clone().to_string(), value1.clone().to_string());
+
+    {
+      let result = s.h_get(key.clone().to_string(), h_key1.clone().to_string());
+
+      assert_eq!(result, Some(&(value1.to_string())));
+    }
+
+    s.h_set(key.clone().to_string(), h_key2.clone().to_string(), value2.clone().to_string());
+
+    {
+      let new_result = s.h_getall(key.clone().to_string()).unwrap();
+
+      {assert_eq!(new_result.get(&h_key1.to_string()), Some(&value1.to_string()));}
+      {assert_eq!(new_result.get(&h_key2.to_string()), Some(&value2.to_string()));}
+    }
   }
 }
