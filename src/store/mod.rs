@@ -7,10 +7,14 @@ const TYPE_MISSMATCH_ERROR: &'static str = "Type missmatch for the key";
 const KEY_NOT_FOUND_ERROR: &'static str = "Key not found";
 const INDEX_OUT_OF_RANGE_ERROR: &'static str = "Index is out of range";
 
+pub type BoxedStringValue = Box<String>;
+pub type BoxedListValue = Box<Vec<String>>;
+pub type BoxedHashValue = Box<HashMap<String, String>>;
+
 enum V {
-  StringValue(String),
-  ListValue(Vec<String>),
-  HashValue(HashMap<String, String>),
+  StringValue(BoxedStringValue),
+  ListValue(BoxedListValue),
+  HashValue(BoxedHashValue),
 }
 
 pub struct Store {
@@ -42,28 +46,29 @@ impl Store {
     }
   }
 
-  pub fn get(&mut self, key: String) -> Option<&String> {
+  pub fn get(&mut self, key: String) -> Option<String> {
     let _data = self.mutex.lock().unwrap();
 
     if let Some(_) = drop_if_expired(self.ttls.entry(key.clone()), &mut self.store) {
       return None
     }
 
-    match self.store.get(&key) {
-      Some(value) => {
-        match value {
-          &V::StringValue(ref s) => Some(s),
-          _ => None,
-        }
-      },
-      None => None,
+    if let Some(value) = self.store.get(&key) {
+      match value {
+        &V::StringValue(ref s) => {
+          Some((**s).clone())
+        },
+        _ => None,
+      }
+    } else {
+      None
     }
   }
 
   pub fn set(&mut self, key: String, val: String) {
     let _data = self.mutex.lock().unwrap();
 
-    self.store.insert(key, V::StringValue(val));
+    self.store.insert(key, V::StringValue(Box::new(val)));
   }
 
   pub fn expire(&mut self, key: String, at: Instant) {
@@ -77,7 +82,7 @@ impl Store {
 
     drop_if_expired(self.ttls.entry(key.clone()), &mut self.store);
 
-    let mut value = self.store.entry(key.clone()).or_insert(V::ListValue(Vec::new()));
+    let mut value = self.store.entry(key.clone()).or_insert(V::ListValue(Box::new(Vec::new())));
 
     if let &mut V::ListValue(ref mut s) = value {
       s.push(val);
@@ -87,7 +92,7 @@ impl Store {
     }
   }
 
-  pub fn l_get(&mut self, key: String, index: &usize) -> Option<&String> {
+  pub fn l_get(&mut self, key: String, index: &usize) -> Option<String> {
     let _data = self.mutex.lock().unwrap();
 
     if let Some(_) = drop_if_expired(self.ttls.entry(key.clone()), &mut self.store) {
@@ -97,7 +102,7 @@ impl Store {
     match self.store.get(&key) {
       Some(value) => {
         match value {
-          &V::ListValue(ref v) if v.len() > *index => Some(&v[*index]),
+          &V::ListValue(ref v) if v.len() > *index => Some(v[*index].clone()),
           _ => None,
         }
       },
@@ -105,7 +110,7 @@ impl Store {
     }
   }
 
-  pub fn l_getall(&mut self, key: String) -> Option<&Vec<String>> {
+  pub fn l_getall(&mut self, key: String) -> Option<Vec<String>> {
     let _data = self.mutex.lock().unwrap();
 
     if let Some(_) = drop_if_expired(self.ttls.entry(key.clone()), &mut self.store) {
@@ -115,7 +120,7 @@ impl Store {
     match self.store.get(&key) {
       Some(value) => {
         match value {
-          &V::ListValue(ref v) => Some(v),
+          &V::ListValue(ref v) => Some((**v).clone()),
           _ => None,
         }
       },
@@ -185,7 +190,7 @@ impl Store {
 
     drop_if_expired(self.ttls.entry(key.clone()), &mut self.store);
 
-    let mut value = self.store.entry(key.clone()).or_insert(V::HashValue(HashMap::new()));
+    let mut value = self.store.entry(key.clone()).or_insert(V::HashValue(Box::new(HashMap::new())));
 
     if let &mut V::HashValue(ref mut map) = value {
       map.insert(h_key, val);
@@ -195,7 +200,7 @@ impl Store {
     }
   }
 
-  pub fn h_get(&mut self, key: String, h_key: String) -> Option<&String> {
+  pub fn h_get(&mut self, key: String, h_key: String) -> Option<String> {
     let _data = self.mutex.lock().unwrap();
 
     if let Some(_) = drop_if_expired(self.ttls.entry(key.clone()), &mut self.store) {
@@ -205,7 +210,11 @@ impl Store {
     match self.store.get_mut(&key) {
       Some(value) => {
         if let &mut V::HashValue(ref mut map) = value {
-          map.get(&h_key)
+          if let Some(ref v) = map.get(&h_key) {
+            Some((*v).clone())
+          } else {
+            None
+          }
         } else {
           None
         }
@@ -214,7 +223,7 @@ impl Store {
     }
   }
 
-  pub fn h_getall(&mut self, key: String) -> Option<&HashMap<String, String>> {
+  pub fn h_getall(&mut self, key: String) -> Option<HashMap<String, String>> {
     let _data = self.mutex.lock().unwrap();
 
     if let Some(_) = drop_if_expired(self.ttls.entry(key.clone()), &mut self.store) {
@@ -224,7 +233,7 @@ impl Store {
     match self.store.get(&key) {
       Some(value) => {
         match value {
-          &V::HashValue(ref v) => Some(v),
+          &V::HashValue(ref v) => Some((**v).clone()),
           _ => None,
         }
       },
@@ -246,7 +255,7 @@ mod test {
     let value = "bar";
     s.set(key.clone().to_string(), value.clone().to_string());
 
-    assert_eq!(s.get(key.clone().to_string()), Some(&(value.to_string())));
+    assert_eq!(s.get(key.clone().to_string()), Some(value.to_string()));
     assert_eq!(s.get("baz".to_string()), None);
   }
 
@@ -257,7 +266,7 @@ mod test {
     let value = "bar";
     s.set(key.clone().to_string(), value.clone().to_string());
     s.expire(key.clone().to_string(), Instant::now() + Duration::new(1, 0));
-    assert_eq!(s.get(key.clone().to_string()), Some(&(value.to_string())));
+    assert_eq!(s.get(key.clone().to_string()), Some(value.to_string()));
 
     sleep(Duration::new(1, 0));
 
@@ -272,7 +281,7 @@ mod test {
     let result = s.l_append(key.clone().to_string(), value.clone().to_string());
 
     assert_eq!(result, Ok(()));
-    assert_eq!(s.l_get(key.clone().to_string(), &0), Some(&(value.to_string())));
+    assert_eq!(s.l_get(key.clone().to_string(), &0), Some(value.to_string()));
     assert_eq!(s.l_get(key.clone().to_string(), &1), None);
   }
 
@@ -303,7 +312,7 @@ mod test {
     let new_value = "baz";
     s.l_append(key.clone().to_string(), new_value.clone().to_string());
 
-    assert_eq!(s.l_get(key.clone().to_string(), &0), Some(&(new_value.to_string())));
+    assert_eq!(s.l_get(key.clone().to_string(), &0), Some(new_value.to_string()));
   }
 
   #[test]
@@ -318,7 +327,7 @@ mod test {
 
     let result = s.l_getall(key.clone().to_string());
 
-    assert_eq!(result, Some(&vec!["bar".to_string(), "baz".to_string()]));
+    assert_eq!(result, Some(vec!["bar".to_string(), "baz".to_string()]));
   }
 
   #[test]
@@ -335,7 +344,7 @@ mod test {
 
     {
       let result = s.l_getall(key.clone().to_string());
-      assert_eq!(result, Some(&vec!["foobar".to_string(), "bar".to_string(), "baz".to_string()]));
+      assert_eq!(result, Some(vec!["foobar".to_string(), "bar".to_string(), "baz".to_string()]));
     }
 
     {
@@ -367,7 +376,7 @@ mod test {
     {
       s.l_drop(key.clone().to_string(), &0);
       let result = s.l_getall(key.clone().to_string());
-      assert_eq!(result, Some(&vec![]));
+      assert_eq!(result, Some(vec![]));
     }
   }
 
@@ -379,7 +388,7 @@ mod test {
 
     s.set(key.clone().to_string(), value.clone().to_string());
 
-    assert_eq!(s.get(key.clone().to_string()), Some(&(value.to_string())));
+    assert_eq!(s.get(key.clone().to_string()), Some(value.to_string()));
 
     s.drop(key.clone().to_string());
 
@@ -400,7 +409,7 @@ mod test {
     {
       let result = s.h_get(key.clone().to_string(), h_key1.clone().to_string());
 
-      assert_eq!(result, Some(&(value1.to_string())));
+      assert_eq!(result, Some(value1.to_string()));
     }
 
     s.h_set(key.clone().to_string(), h_key2.clone().to_string(), value2.clone().to_string());
