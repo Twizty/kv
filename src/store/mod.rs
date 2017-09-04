@@ -7,9 +7,9 @@ const TYPE_MISSMATCH_ERROR: &'static str = "Type missmatch for the key";
 const KEY_NOT_FOUND_ERROR: &'static str = "Key not found";
 const INDEX_OUT_OF_RANGE_ERROR: &'static str = "Index is out of range";
 
-pub type BoxedStringValue = Box<String>;
-pub type BoxedListValue = Box<Vec<String>>;
-pub type BoxedHashValue = Box<HashMap<String, String>>;
+pub type BoxedStringValue = String;
+pub type BoxedListValue = Vec<String>;
+pub type BoxedHashValue = HashMap<String, String>;
 
 enum V {
   StringValue(BoxedStringValue),
@@ -56,7 +56,7 @@ impl Store {
     if let Some(value) = self.store.get(&key) {
       match value {
         &V::StringValue(ref s) => {
-          Some((**s).clone())
+          Some((*s).clone())
         },
         _ => None,
       }
@@ -68,7 +68,7 @@ impl Store {
   pub fn set(&mut self, key: String, val: String) {
     let _data = self.mutex.lock().unwrap();
 
-    self.store.insert(key, V::StringValue(Box::new(val)));
+    self.store.insert(key, V::StringValue(val));
   }
 
   pub fn expire(&mut self, key: String, at: Instant) {
@@ -82,7 +82,7 @@ impl Store {
 
     drop_if_expired(self.ttls.entry(key.clone()), &mut self.store);
 
-    let mut value = self.store.entry(key.clone()).or_insert(V::ListValue(Box::new(Vec::new())));
+    let mut value = self.store.entry(key.clone()).or_insert(V::ListValue(Vec::new()));
 
     if let &mut V::ListValue(ref mut s) = value {
       s.push(val);
@@ -120,7 +120,7 @@ impl Store {
     match self.store.get(&key) {
       Some(value) => {
         match value {
-          &V::ListValue(ref v) => Some((**v).clone()),
+          &V::ListValue(ref v) => Some((*v).clone()),
           _ => None,
         }
       },
@@ -190,7 +190,7 @@ impl Store {
 
     drop_if_expired(self.ttls.entry(key.clone()), &mut self.store);
 
-    let mut value = self.store.entry(key.clone()).or_insert(V::HashValue(Box::new(HashMap::new())));
+    let mut value = self.store.entry(key.clone()).or_insert(V::HashValue(HashMap::new()));
 
     if let &mut V::HashValue(ref mut map) = value {
       map.insert(h_key, val);
@@ -233,7 +233,7 @@ impl Store {
     match self.store.get(&key) {
       Some(value) => {
         match value {
-          &V::HashValue(ref v) => Some((**v).clone()),
+          &V::HashValue(ref v) => Some((*v).clone()),
           _ => None,
         }
       },
