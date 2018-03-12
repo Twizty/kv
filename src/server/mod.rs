@@ -2,19 +2,22 @@
 
 use futures::{Future, Stream, Poll};
 use serde_json;
-use tokio_core::io::{copy, Io};
-use tokio_io;
-use tokio_core::net::TcpListener;
-use tokio_core::reactor::{Core,Handle};
+use tokio;
+use tokio::net::TcpListener;
+use std::io;
 use std::collections::hash_map::Entry;
 use std::net::SocketAddr;
 use std::rc::Rc;
+use tokio::prelude::*;
+use std::sync::{Arc, Mutex};
 use serde::{Serialize, Serializer};
 use std::cell::{RefCell, RefMut};
 use std::time::Duration;
 use std::borrow::Cow;
 use std::num::ParseIntError;
 use std::collections::HashMap;
+use tokio_io::{AsyncRead, AsyncWrite};
+use futures::Async;
 use std::io::{Read, Write, Error, ErrorKind};
 use std::time::{Instant};
 use super::store::Store;
@@ -59,7 +62,7 @@ struct Handler<R, W> {
   writer: W,
   buf: Vec<u8>,
   skip_bytes: Vec<usize>,
-  store: Rc<RefCell<Store>>
+  store: Arc<Mutex<Store>>
 }
 
 #[derive(Debug)]
@@ -78,15 +81,15 @@ enum Command {
 }
 
 impl<R, W> Future for Handler<R, W>
-  where R: Read,
-        W: Write,
+  where R: AsyncRead,
+        W: AsyncWrite,
 {
   type Item = u64;
   type Error = Error;
 
   fn poll(&mut self) -> Poll<u64, Error> {
     loop {
-      let result = try_nb!(read_to_block(&mut self.reader, &mut self.buf));
+      let result = try_ready!(poll_read(read_to_block(&mut self.reader, &mut self.buf)));
       if self.buf.len() > 3 && self.buf[0..4] == EXIT {
         return Ok(0.into())
       }
@@ -116,7 +119,7 @@ impl<R, W> Future for Handler<R, W>
 
 impl<R, W> Handler<R, W> {
   fn process_command(&mut self, c: Command) -> serde_json::Result<String> {
-    let mut store = self.store.borrow_mut();
+    let mut store = self.store.lock().unwrap();
     match c {
       Command::Get(s) => {
         match store.get(s) {
@@ -142,7 +145,7 @@ impl<R, W> Handler<R, W> {
         )
       },
       Command::Drop(k) => {
-        store.drop(k);
+        store.drop_key(k);
         serde_json::to_string(
           &Response { status: Status::Ok, message: None }
         )
@@ -374,6 +377,16 @@ fn parse_query(query: &mut Vec<u8>, skip_bytes: &mut Vec<usize>) -> Result<Comma
   Ok(Command::Get("123".to_string()))
 }
 
+fn poll_read(r: Result<usize, Error>) -> Poll<usize, Error> {
+  match r {
+    Ok(t) => Ok(Async::Ready(t)),
+    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+      return Ok(Async::NotReady)
+    }
+    Err(e) => return Err(e.into()),
+  }
+}
+
 fn read_to_block<R: Read + ?Sized>(r: &mut R, buf: &mut Vec<u8>) -> Result<usize, Error> {
   let start_len = buf.len();
   let mut g = Guard { len: buf.len(), buf };
@@ -423,33 +436,32 @@ fn is_empty(buf: &mut Vec<u8>) -> bool {
 }
 
 pub struct Server {
-  store: Rc<RefCell<Store>>,
+  store: Arc<Mutex<Store>>,
   addr: &'static str,
 }
 
 impl Server {
   pub fn new(addr: &'static str) -> Server {
     Server {
-      store: Rc::new(RefCell::new(Store::new())),
+      store: Arc::new(Mutex::new(Store::new())),
       addr
     }
   }
 
-  pub fn run(&mut self) {
-    let mut core = Core::new().unwrap();
-    let handler = core.handle();
-    let listener = TcpListener::bind(&self.addr.parse().unwrap(), &handler).unwrap();
-    let server = listener.incoming().for_each(|(mut sock, _)| {
+  pub fn run(&self) {
+    let listener = TcpListener::bind(&self.addr.parse().unwrap()).unwrap();
+    let rc = Arc::clone(&self.store);
+    let server = listener.incoming().for_each(move |tcp| {
       // Split up the reading and writing parts of the
       // socket
-      let (mut reader, mut writer) = sock.split();
+      let (reader, writer) = tcp.split();
 
       let mut h = Handler {
         reader,
         writer,
         buf: Vec::with_capacity(100),
         skip_bytes: Vec::with_capacity(100),
-        store: Rc::clone(&mut self.store),
+        store: Arc::clone(&rc),
       };
 
       let handle_conn = h.map(|v| {
@@ -459,15 +471,12 @@ impl Server {
       });
 
       // Spawn the future as a concurrent task
-      handler.spawn(handle_conn);
+      tokio::spawn(handle_conn);
 
       Ok(())
+    }).map_err(|err| {
+      println!("server error {:?}", err);
     });
-
-//    let shared_map: Rc<RefCell<_>> = Rc::new(RefCell::new(Store::new()));
-//    let a = shared_map.borrow_mut();
-
-    // Spin up the server on the event loop
-    core.run(server).unwrap();
+    tokio::run(server);
   }
 }

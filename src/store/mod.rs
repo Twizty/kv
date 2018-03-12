@@ -18,7 +18,6 @@ enum V {
 }
 
 pub struct Store {
-  mutex: Mutex<()>,
   store: HashMap<String, V>,
   ttls:  HashMap<String, Instant>,
 }
@@ -40,15 +39,12 @@ fn drop_if_expired(e: Entry<String, Instant>, store: &mut HashMap<String, V>) ->
 impl Store {
   pub fn new() -> Store {
     Store {
-      mutex: Mutex::new(()),
       store: HashMap::new(),
       ttls:  HashMap::new(),
     }
   }
 
   pub fn get(&mut self, key: String) -> Option<&String> {
-    let _data = self.mutex.lock().unwrap();
-
     if let Some(_) = drop_if_expired(self.ttls.entry(key.clone()), &mut self.store) {
       return None
     }
@@ -66,20 +62,14 @@ impl Store {
   }
 
   pub fn set(&mut self, key: String, val: String) {
-    let _data = self.mutex.lock().unwrap();
-
     self.store.insert(key, V::StringValue(val));
   }
 
   pub fn expire(&mut self, key: String, at: Instant) {
-    let _data = self.mutex.lock().unwrap();
-
     self.ttls.insert(key, at); 
   }
 
   pub fn l_append(&mut self, key: String, val: String) -> Result<(), &'static str> {
-    let _data = self.mutex.lock().unwrap();
-
     drop_if_expired(self.ttls.entry(key.clone()), &mut self.store);
 
     let mut value = self.store.entry(key.clone()).or_insert(V::ListValue(Vec::new()));
@@ -93,8 +83,6 @@ impl Store {
   }
 
   pub fn l_get(&mut self, key: String, index: &usize) -> Option<&String> {
-    let _data = self.mutex.lock().unwrap();
-
     if let Some(_) = drop_if_expired(self.ttls.entry(key.clone()), &mut self.store) {
       return None
     }
@@ -111,8 +99,6 @@ impl Store {
   }
 
   pub fn l_getall(&mut self, key: String) -> Option<&Vec<String>> {
-    let _data = self.mutex.lock().unwrap();
-
     if let Some(_) = drop_if_expired(self.ttls.entry(key.clone()), &mut self.store) {
       return None
     }
@@ -129,8 +115,6 @@ impl Store {
   }
 
   pub fn l_insert(&mut self, key: String, index: &usize, val: String) -> Result<(), &'static str> {
-    let _data = self.mutex.lock().unwrap();
-
     if let Some(_) = drop_if_expired(self.ttls.entry(key.clone()), &mut self.store) {
       return Err(KEY_NOT_FOUND_ERROR)
     }
@@ -153,16 +137,12 @@ impl Store {
     }
   }
 
-  pub fn drop(&mut self, key: String) {
-    let _data = self.mutex.lock().unwrap();
-
+  pub fn drop_key(&mut self, key: String) {
     self.store.remove(&key);
     self.ttls.remove(&key);
   }
 
   pub fn l_drop(&mut self, key: String, index: &usize) -> Result<(), &'static str> {
-    let _data = self.mutex.lock().unwrap();
-
     if let Some(_) = drop_if_expired(self.ttls.entry(key.clone()), &mut self.store) {
       return Err(KEY_NOT_FOUND_ERROR)
     }
@@ -186,8 +166,6 @@ impl Store {
   }
 
   pub fn h_set(&mut self, key: String, h_key: String, val: String) -> Result<(), &'static str> {
-    let _data = self.mutex.lock().unwrap();
-
     drop_if_expired(self.ttls.entry(key.clone()), &mut self.store);
 
     let mut value = self.store.entry(key.clone()).or_insert(V::HashValue(HashMap::new()));
@@ -201,8 +179,6 @@ impl Store {
   }
 
   pub fn h_get(&mut self, key: String, h_key: String) -> Option<&String> {
-    let _data = self.mutex.lock().unwrap();
-
     if let Some(_) = drop_if_expired(self.ttls.entry(key.clone()), &mut self.store) {
       return None
     }
@@ -224,8 +200,6 @@ impl Store {
   }
 
   pub fn h_getall(&mut self, key: String) -> Option<&HashMap<String, String>> {
-    let _data = self.mutex.lock().unwrap();
-
     if let Some(_) = drop_if_expired(self.ttls.entry(key.clone()), &mut self.store) {
       return None
     }
@@ -390,7 +364,7 @@ mod test {
 
     assert_eq!(s.get(key.to_string()), Some(&value.to_string()));
 
-    s.drop(key.to_string());
+    s.drop_key(key.to_string());
 
     assert_eq!(s.get(key.to_string()), None);
   }
