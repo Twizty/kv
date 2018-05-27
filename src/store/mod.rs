@@ -5,6 +5,7 @@ use std::time::{Instant};
 
 const TYPE_MISSMATCH_ERROR: &'static str = "Type missmatch for the key";
 const KEY_NOT_FOUND_ERROR: &'static str = "Key not found";
+const SUB_KEY_NOT_FOUND_ERROR: &'static str = "Sub-key not found";
 const INDEX_OUT_OF_RANGE_ERROR: &'static str = "Index is out of range";
 
 type StringValue = String;
@@ -22,18 +23,32 @@ pub struct Store {
   ttls:  HashMap<String, Instant>,
 }
 
-fn drop_if_expired(e: Entry<String, Instant>, store: &mut HashMap<String, V>) -> Option<()> {
+fn drop_if_expired(e: Entry<String, Instant>, store: &mut HashMap<String, V>) -> (String, bool) {
   let now = Instant::now();
 
-  if let Entry::Occupied(occ_e) = e {
-    if now >= *occ_e.get() {
-      store.remove(occ_e.key());
-      occ_e.remove();
-      return Some(())
+  match e {
+    Entry::Occupied(occ_e) => {
+      if now >= *occ_e.get() {
+        store.remove(occ_e.key());
+        let (key, _) = occ_e.remove_entry();
+        (key, true)
+      } else {
+        let key = occ_e.replace_key();
+        (key, false)
+      }
+    }
+    Entry::Vacant(vac_e) => {
+      let key = vac_e.into_key();
+      (key, false)
     }
   }
+}
 
-  None
+macro_rules! try_drop {
+  ($e:expr) => (match $e {
+    (v, false) => v,
+    (_, true) => return Err(KEY_NOT_FOUND_ERROR),
+  })
 }
 
 impl Store {
@@ -44,20 +59,18 @@ impl Store {
     }
   }
 
-  pub fn get(&mut self, key: String) -> Option<&String> {
-    if let Some(_) = drop_if_expired(self.ttls.entry(key.clone()), &mut self.store) {
-      return None
-    }
+  pub fn get(&mut self, key: String) -> Result<&String, &'static str> {
+    let k = try_drop!(drop_if_expired(self.ttls.entry(key), &mut self.store));
 
-    if let Some(value) = self.store.get(&key) {
+    if let Some(value) = self.store.get(&k) {
       match value {
         &V::StringValue(ref s) => {
-          Some(s)
+          Ok(s)
         },
-        _ => None,
+        _ => Err(TYPE_MISSMATCH_ERROR),
       }
     } else {
-      None
+      Err(KEY_NOT_FOUND_ERROR)
     }
   }
 
@@ -70,9 +83,9 @@ impl Store {
   }
 
   pub fn l_append(&mut self, key: String, val: String) -> Result<(), &'static str> {
-    drop_if_expired(self.ttls.entry(key.clone()), &mut self.store);
+    let (k, _) = drop_if_expired(self.ttls.entry(key), &mut self.store);
 
-    let mut value = self.store.entry(key.clone()).or_insert(V::ListValue(Vec::new()));
+    let mut value = self.store.entry(k).or_insert(V::ListValue(Vec::new()));
 
     if let &mut V::ListValue(ref mut s) = value {
       s.push(val);
@@ -82,44 +95,39 @@ impl Store {
     }
   }
 
-  pub fn l_get(&mut self, key: String, index: &usize) -> Option<&String> {
-    if let Some(_) = drop_if_expired(self.ttls.entry(key.clone()), &mut self.store) {
-      return None
-    }
+  pub fn l_get(&mut self, key: String, index: &usize) -> Result<&String, &'static str> {
+    let k = try_drop!(drop_if_expired(self.ttls.entry(key), &mut self.store));
 
-    match self.store.get(&key) {
+    match self.store.get(&k) {
       Some(value) => {
         match value {
-          &V::ListValue(ref v) if v.len() > *index => Some(&v[*index]),
-          _ => None,
+          &V::ListValue(ref v) if v.len() > *index => Ok(&v[*index]),
+          &V::ListValue(ref v) if v.len() <= *index => Err(INDEX_OUT_OF_RANGE_ERROR),
+          _ => Err(TYPE_MISSMATCH_ERROR),
         }
       },
-      None => None,
+      None => Err(KEY_NOT_FOUND_ERROR),
     }
   }
 
-  pub fn l_getall(&mut self, key: String) -> Option<&Vec<String>> {
-    if let Some(_) = drop_if_expired(self.ttls.entry(key.clone()), &mut self.store) {
-      return None
-    }
+  pub fn l_getall(&mut self, key: String) -> Result<&Vec<String>, &'static str> {
+    let k = try_drop!(drop_if_expired(self.ttls.entry(key), &mut self.store));
 
-    match self.store.get(&key) {
+    match self.store.get(&k) {
       Some(value) => {
         match value {
-          &V::ListValue(ref v) => Some(v),
-          _ => None,
+          &V::ListValue(ref v) => Ok(v),
+          _ => Err(TYPE_MISSMATCH_ERROR),
         }
       },
-      None => None,
+      None => Err(KEY_NOT_FOUND_ERROR),
     }
   }
 
   pub fn l_insert(&mut self, key: String, index: &usize, val: String) -> Result<(), &'static str> {
-    if let Some(_) = drop_if_expired(self.ttls.entry(key.clone()), &mut self.store) {
-      return Err(KEY_NOT_FOUND_ERROR)
-    }
+    let k = try_drop!(drop_if_expired(self.ttls.entry(key), &mut self.store));
 
-    match self.store.get_mut(&key) {
+    match self.store.get_mut(&k) {
       Some(value) => {
         match value {
           &mut V::ListValue(ref mut list) => {
@@ -143,11 +151,9 @@ impl Store {
   }
 
   pub fn l_drop(&mut self, key: String, index: &usize) -> Result<(), &'static str> {
-    if let Some(_) = drop_if_expired(self.ttls.entry(key.clone()), &mut self.store) {
-      return Err(KEY_NOT_FOUND_ERROR)
-    }
+    let k = try_drop!(drop_if_expired(self.ttls.entry(key), &mut self.store));
 
-    match self.store.get_mut(&key) {
+    match self.store.get_mut(&k) {
       Some(value) => {
         match value {
           &mut V::ListValue(ref mut list) => {
@@ -166,9 +172,9 @@ impl Store {
   }
 
   pub fn h_set(&mut self, key: String, h_key: String, val: String) -> Result<(), &'static str> {
-    drop_if_expired(self.ttls.entry(key.clone()), &mut self.store);
+    let (k, _) = drop_if_expired(self.ttls.entry(key), &mut self.store);
 
-    let mut value = self.store.entry(key.clone()).or_insert(V::HashValue(HashMap::new()));
+    let mut value = self.store.entry(k).or_insert(V::HashValue(HashMap::new()));
 
     if let &mut V::HashValue(ref mut map) = value {
       map.insert(h_key, val);
@@ -178,40 +184,36 @@ impl Store {
     }
   }
 
-  pub fn h_get(&mut self, key: String, h_key: String) -> Option<&String> {
-    if let Some(_) = drop_if_expired(self.ttls.entry(key.clone()), &mut self.store) {
-      return None
-    }
+  pub fn h_get(&mut self, key: String, h_key: String) -> Result<&String, &'static str> {
+    let k = try_drop!(drop_if_expired(self.ttls.entry(key), &mut self.store));
 
-    match self.store.get_mut(&key) {
+    match self.store.get_mut(&k) {
       Some(value) => {
         if let &mut V::HashValue(ref mut map) = value {
           if let Some(ref v) = map.get(&h_key) {
-            Some(v)
+            Ok(v)
           } else {
-            None
+            Err(SUB_KEY_NOT_FOUND_ERROR)
           }
         } else {
-          None
+          Err(TYPE_MISSMATCH_ERROR)
         }
       },
-      None => None
+      None => Err(KEY_NOT_FOUND_ERROR)
     }
   }
 
-  pub fn h_getall(&mut self, key: String) -> Option<&HashMap<String, String>> {
-    if let Some(_) = drop_if_expired(self.ttls.entry(key.clone()), &mut self.store) {
-      return None
-    }
+  pub fn h_getall(&mut self, key: String) -> Result<&HashMap<String, String>, &'static str> {
+    let k = try_drop!(drop_if_expired(self.ttls.entry(key), &mut self.store));
 
-    match self.store.get(&key) {
+    match self.store.get(&k) {
       Some(value) => {
         match value {
-          &V::HashValue(ref v) => Some(v),
-          _ => None,
+          &V::HashValue(ref v) => Ok(v),
+          _ => Err(TYPE_MISSMATCH_ERROR),
         }
       },
-      None => None,
+      None => Err(KEY_NOT_FOUND_ERROR),
     }
   }
 }
@@ -229,8 +231,8 @@ mod test {
     let value = "bar";
     s.set(key.to_string(), value.to_string());
 
-    assert_eq!(s.get(key.to_string()), Some(&value.to_string()));
-    assert_eq!(s.get("baz".to_string()), None);
+    assert_eq!(s.get(key.to_string()), Ok(&value.to_string()));
+    assert_eq!(s.get("baz".to_string()), Err(KEY_NOT_FOUND_ERROR));
   }
 
   #[test]
@@ -240,11 +242,11 @@ mod test {
     let value = "bar";
     s.set(key.to_string(), value.to_string());
     s.expire(key.to_string(), Instant::now() + Duration::new(1, 0));
-    assert_eq!(s.get(key.to_string()), Some(&value.to_string()));
+    assert_eq!(s.get(key.to_string()), Ok(&value.to_string()));
 
     sleep(Duration::new(1, 0));
 
-    assert_eq!(s.get(key.to_string()), None);
+    assert_eq!(s.get(key.to_string()), Err(KEY_NOT_FOUND_ERROR));
   }
 
   #[test]
@@ -255,8 +257,8 @@ mod test {
     let result = s.l_append(key.to_string(), value.to_string());
 
     assert_eq!(result, Ok(()));
-    assert_eq!(s.l_get(key.to_string(), &0), Some(&value.to_string()));
-    assert_eq!(s.l_get(key.to_string(), &1), None);
+    assert_eq!(s.l_get(key.to_string(), &0), Ok(&value.to_string()));
+    assert_eq!(s.l_get(key.to_string(), &1), Err(INDEX_OUT_OF_RANGE_ERROR));
   }
 
   #[test]
@@ -286,7 +288,7 @@ mod test {
     let new_value = "baz";
     s.l_append(key.to_string(), new_value.to_string());
 
-    assert_eq!(s.l_get(key.to_string(), &0), Some(&new_value.to_string()));
+    assert_eq!(s.l_get(key.to_string(), &0), Ok(&new_value.to_string()));
   }
 
   #[test]
@@ -301,7 +303,7 @@ mod test {
 
     let result = s.l_getall(key.to_string());
 
-    assert_eq!(result, Some(&vec!["bar".to_string(), "baz".to_string()]));
+    assert_eq!(result, Ok(&vec!["bar".to_string(), "baz".to_string()]));
   }
 
   #[test]
@@ -318,7 +320,7 @@ mod test {
 
     {
       let result = s.l_getall(key.to_string());
-      assert_eq!(result, Some(&vec!["foobar".to_string(), "bar".to_string(), "baz".to_string()]));
+      assert_eq!(result, Ok(&vec!["foobar".to_string(), "bar".to_string(), "baz".to_string()]));
     }
 
     {
@@ -350,7 +352,7 @@ mod test {
     {
       s.l_drop(key.to_string(), &0);
       let result = s.l_getall(key.to_string());
-      assert_eq!(result, Some(&vec![]));
+      assert_eq!(result, Ok(&vec![]));
     }
   }
 
@@ -362,11 +364,11 @@ mod test {
 
     s.set(key.to_string(), value.to_string());
 
-    assert_eq!(s.get(key.to_string()), Some(&value.to_string()));
+    assert_eq!(s.get(key.to_string()), Ok(&value.to_string()));
 
     s.drop_key(key.to_string());
 
-    assert_eq!(s.get(key.to_string()), None);
+    assert_eq!(s.get(key.to_string()), Err(KEY_NOT_FOUND_ERROR));
   }
 
   #[test]
@@ -383,7 +385,7 @@ mod test {
     {
       let result = s.h_get(key.to_string(), h_key1.to_string());
 
-      assert_eq!(result, Some(&value1.to_string()));
+      assert_eq!(result, Ok(&value1.to_string()));
     }
 
     s.h_set(key.to_string(), h_key2.to_string(), value2.to_string());

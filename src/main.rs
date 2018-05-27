@@ -1,4 +1,5 @@
 #![feature(read_initializer)]
+#![feature(map_entry_replace)]
 extern crate serde;
 extern crate serde_json;
 

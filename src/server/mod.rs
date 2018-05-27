@@ -123,12 +123,12 @@ impl<R, W> Handler<R, W> {
     match c {
       Command::Get(s) => {
         match store.get(s) {
-          Some(ref mut v) => {
+          Ok(ref mut v) => {
             let res = Response { status: Status::Ok, message: Some(Res::StringResult(v)) };
             serde_json::to_string(&res)
           },
-          None => serde_json::to_string(
-            &Response { status: Status::Error, message: Some(Res::RawResult(EMPTY_KEY)) }
+          Err(err) => serde_json::to_string(
+            &Response { status: Status::Error, message: Some(Res::RawResult(err)) }
           ),
         }
       },
@@ -152,23 +152,23 @@ impl<R, W> Handler<R, W> {
       },
       Command::LGet(k, i) => {
         match store.l_get(k, &i) {
-          Some(ref mut v) => {
+          Ok(ref mut v) => {
             let res = Response { status: Status::Ok, message: Some(Res::StringResult(v)) };
             serde_json::to_string(&res)
           },
-          None => serde_json::to_string(
-            &Response { status: Status::Error, message: Some(Res::RawResult(EMPTY_KEY)) }
+          Err(err) => serde_json::to_string(
+            &Response { status: Status::Error, message: Some(Res::RawResult(err)) }
           ),
         }
       },
       Command::LGetAll(k) => {
         match store.l_getall(k) {
-          Some(ref mut v) => {
+          Ok(ref mut v) => {
             let res = Response { status: Status::Ok, message: Some(Res::ListResult(v)) };
             serde_json::to_string(&res)
           },
-          None => serde_json::to_string(
-            &Response { status: Status::Error, message: Some(Res::RawResult(EMPTY_KEY)) }
+          Err(err) => serde_json::to_string(
+            &Response { status: Status::Error, message: Some(Res::RawResult(err)) }
           ),
         }
       },
@@ -207,23 +207,23 @@ impl<R, W> Handler<R, W> {
       },
       Command::HGet(key, subkey) => {
         match store.h_get(key, subkey) {
-          Some(ref mut v) => {
+          Ok(ref mut v) => {
             let res = Response { status: Status::Ok, message: Some(Res::StringResult(v)) };
             serde_json::to_string(&res)
           },
-          None => serde_json::to_string(
-            &Response { status: Status::Error, message: Some(Res::RawResult(EMPTY_KEY)) }
+          Err(err) => serde_json::to_string(
+            &Response { status: Status::Error, message: Some(Res::RawResult(err)) }
           ),
         }
       },
       Command::HGetAll(key) => {
         match store.h_getall(key) {
-          Some(ref mut v) => {
+          Ok(ref mut v) => {
             let res = Response { status: Status::Ok, message: Some(Res::HashResult(v)) };
             serde_json::to_string(&res)
           },
-          None => serde_json::to_string(
-            &Response { status: Status::Error, message: Some(Res::RawResult(EMPTY_KEY)) }
+          Err(err) => serde_json::to_string(
+            &Response { status: Status::Error, message: Some(Res::RawResult(err)) }
           ),
         }
       },
